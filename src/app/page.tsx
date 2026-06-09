@@ -14,6 +14,7 @@ import {
   GraduationCap,
   LineChart,
   LockKeyhole,
+  LogOut,
   MessageSquareText,
   Mic2,
   ShieldCheck,
@@ -21,10 +22,11 @@ import {
   Upload,
   Users
 } from "lucide-react";
+import type { User } from "@supabase/supabase-js";
 import { useEffect, useMemo, useState } from "react";
 import Navbar from "@/components/Navbar";
 import { defaultState, loadState, saveState } from "@/lib/storage";
-import { isSupabaseConfigured } from "@/lib/supabase";
+import { isSupabaseConfigured, supabase } from "@/lib/supabase";
 import { roleQuestionBank, scoreAnswer } from "@/lib/interview";
 import type { InterviewRecord } from "@/types/interview";
 
@@ -40,6 +42,11 @@ export default function Home() {
   const [answers, setAnswers] = useState<string[]>([]);
   const [history, setHistory] = useState<InterviewRecord[]>(defaultState.history);
   const [isSignedIn, setIsSignedIn] = useState(false);
+  const [password, setPassword] = useState("");
+  const [authMode, setAuthMode] = useState<"login" | "signup">("signup");
+  const [authMessage, setAuthMessage] = useState("Use demo mode or connect with Supabase Auth.");
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [isAuthBusy, setIsAuthBusy] = useState(false);
 
   const interviewQuestions = roleQuestionBank[targetRole];
   const feedback = useMemo(() => scoreAnswer(answer), [answer]);
@@ -57,6 +64,34 @@ export default function Home() {
     setResumeName(saved.resumeName);
     setHistory(saved.history);
     setIsSignedIn(true);
+
+    if (!supabase) return;
+
+    supabase.auth.getSession().then(({ data }) => {
+      const user = data.session?.user ?? null;
+      setCurrentUser(user);
+      setIsSignedIn(Boolean(user));
+      if (user?.email) setEmail(user.email);
+      if (user) {
+        setAuthMessage("Supabase session restored.");
+        void loadRemoteHistory(user.id);
+      }
+    });
+
+    const { data } = supabase.auth.onAuthStateChange((_event, session) => {
+      const user = session?.user ?? null;
+      setCurrentUser(user);
+      setIsSignedIn(Boolean(user));
+      if (user?.email) setEmail(user.email);
+      if (user) {
+        setAuthMessage("Signed in with Supabase.");
+        void loadRemoteHistory(user.id);
+      }
+    });
+
+    return () => {
+      data.subscription.unsubscribe();
+    };
   }, []);
 
   useEffect(() => {
@@ -73,7 +108,96 @@ export default function Home() {
     setAnswer(updatedAnswers[nextIndex] || "");
   }
 
-  function finishInterview() {
+  async function loadRemoteHistory(userId: string) {
+    if (!supabase) return;
+
+    const { data, error } = await supabase
+      .from("interviews")
+      .select("id,target_role,score,status,resume_name,created_at")
+      .eq("user_id", userId)
+      .order("created_at", { ascending: false })
+      .limit(10);
+
+    if (error) {
+      setAuthMessage(`Database read issue: ${error.message}`);
+      return;
+    }
+
+    if (data?.length) {
+      setHistory(
+        data.map((item) => ({
+          id: item.id,
+          role: item.target_role,
+          date: new Intl.DateTimeFormat("en", {
+            month: "short",
+            day: "numeric",
+            year: "numeric"
+          }).format(new Date(item.created_at)),
+          score: item.score,
+          status: item.status,
+          resumeName: item.resume_name || "No resume selected"
+        }))
+      );
+    }
+  }
+
+  async function handleAuth() {
+    if (!supabase) {
+      setIsSignedIn(true);
+      setAuthMessage("Demo session active. Add Supabase env keys to use real auth.");
+      return;
+    }
+
+    if (!email || password.length < 6) {
+      setAuthMessage("Enter a valid email and a password with at least 6 characters.");
+      return;
+    }
+
+    setIsAuthBusy(true);
+    const authCall =
+      authMode === "signup"
+        ? supabase.auth.signUp({
+            email,
+            password,
+            options: { data: { full_name: candidateName } }
+          })
+        : supabase.auth.signInWithPassword({ email, password });
+    const { data, error } = await authCall;
+
+    if (error) {
+      setAuthMessage(error.message);
+      setIsAuthBusy(false);
+      return;
+    }
+
+    const user = data.user;
+    if (user) {
+      await supabase.from("profiles").upsert({
+        id: user.id,
+        full_name: candidateName,
+        role: "student"
+      });
+      setCurrentUser(user);
+      setIsSignedIn(true);
+      setAuthMessage(
+        authMode === "signup"
+          ? "Account created. If email confirmation is enabled, confirm your email before login."
+          : "Signed in successfully."
+      );
+      await loadRemoteHistory(user.id);
+    }
+
+    setIsAuthBusy(false);
+  }
+
+  async function handleLogout() {
+    if (supabase) await supabase.auth.signOut();
+    setCurrentUser(null);
+    setIsSignedIn(false);
+    setAuthMessage("Signed out. Local demo data is still available.");
+  }
+
+  async function finishInterview() {
     const finalAnswers = [...answers];
     finalAnswers[activeQuestion] = answer;
 
@@ -98,6 +222,43 @@ export default function Home() {
     };
 
     setHistory((current) => [record, ...current].slice(0, 10));
+
+    if (supabase && currentUser) {
+      const { data, error } = await supabase
+        .from("interviews")
+        .insert({
+          user_id: currentUser.id,
+          target_role: targetRole,
+          score,
+          status: record.status,
+          resume_name: resumeName
+        })
+        .select("id")
+        .single();
+
+      if (error) {
+        setAuthMessage(`Could not save to Supabase: ${error.message}`);
+      } else {
+        const savedInterviewId = data.id;
+        const answerRows = finalAnswers
+          .map((value, index) => ({
+            interview_id: savedInterviewId,
+            question: interviewQuestions[index],
+            answer: value,
+            score: scoreAnswer(value).score,
+            feedback: scoreAnswer(value).note
+          }))
+          .filter((item) => item.answer?.trim());
+
+        if (answerRows.length) {
+          await supabase.from("answers").insert(answerRows);
+        }
+
+        setAuthMessage("Interview saved to Supabase.");
+        await loadRemoteHistory(currentUser.id);
+      }
+    }
+
     setAnswers([]);
     setAnswer("");
     setActiveQuestion(0);
@@ -182,10 +343,16 @@ export default function Home() {
               <Mic2 size={18} aria-hidden="true" />
               Launch Interview
             </a>
-            <button className="secondaryButton" type="button" onClick={() => setIsSignedIn(true)}>
+            <button className="secondaryButton" type="button" onClick={handleAuth} disabled={isAuthBusy}>
               <LockKeyhole size={18} aria-hidden="true" />
-              {isSignedIn ? "Demo Session Active" : "Start Demo Session"}
+              {isSignedIn ? "Session Active" : authMode === "signup" ? "Create Account" : "Login"}
             </button>
+            {isSignedIn ? (
+              <button className="ghostButton borderedButton" type="button" onClick={handleLogout}>
+                <LogOut size={18} aria-hidden="true" />
+                Logout
+              </button>
+            ) : null}
           </div>
         </div>
 
@@ -213,6 +380,54 @@ export default function Home() {
         <MetricCard icon={MessageSquareText} label="Interviews" value={`${history.length}`} detail="Saved attempts" />
         <MetricCard icon={Star} label="Average score" value={`${averageScore}%`} detail="Across sessions" />
         <MetricCard icon={Gauge} label="Readiness" value={`${readiness}%`} detail="Live interview signal" />
+      </section>
+
+      <section className="authGrid" aria-label="Authentication">
+        <article className="panel authPanel">
+          <div className="sectionTitle">
+            <LockKeyhole size={22} aria-hidden="true" />
+            <div>
+              <h2>Account Access</h2>
+              <p>{currentUser ? `Connected as ${currentUser.email}` : "Create or access a candidate account."}</p>
+            </div>
+          </div>
+
+          <div className="authControls">
+            <div className="segmentedControl" aria-label="Authentication mode">
+              <button
+                className={authMode === "signup" ? "activeSegment" : ""}
+                type="button"
+                onClick={() => setAuthMode("signup")}
+              >
+                Sign Up
+              </button>
+              <button
+                className={authMode === "login" ? "activeSegment" : ""}
+                type="button"
+                onClick={() => setAuthMode("login")}
+              >
+                Login
+              </button>
+            </div>
+            <input
+              value={email}
+              onChange={(event) => setEmail(event.target.value)}
+              placeholder="candidate@email.com"
+              aria-label="Email"
+            />
+            <input
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+              placeholder="Password"
+              type="password"
+              aria-label="Password"
+            />
+            <button className="primaryButton" type="button" onClick={handleAuth} disabled={isAuthBusy}>
+              {isAuthBusy ? "Please wait..." : authMode === "signup" ? "Create Account" : "Login"}
+            </button>
+          </div>
+          <p className="authMessage">{authMessage}</p>
+        </article>
       </section>
 
       <section className="workspaceGrid">
@@ -316,10 +531,10 @@ export default function Home() {
             </div>
           </div>
           <div className="statusList">
-            <StatusItem label="Login/signup" state={isSupabaseConfigured ? "Backend ready" : "Demo ready"} />
+            <StatusItem label="Login/signup" state={currentUser ? "Live auth" : isSupabaseConfigured ? "Ready" : "Demo"} />
             <StatusItem label="Resume upload" state="Local capture" />
             <StatusItem label="AI feedback" state="Rule engine" />
-            <StatusItem label="History" state="Browser storage" />
+            <StatusItem label="History" state={currentUser ? "Supabase DB" : "Browser storage"} />
           </div>
         </article>
 

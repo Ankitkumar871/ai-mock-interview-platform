@@ -30,7 +30,8 @@ Then open `http://localhost:3000`.
 2. Copy `.env.example` to `.env.local`.
 3. Add `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY`.
 4. Run the SQL in `docs/supabase-schema.sql` inside Supabase SQL Editor.
-5. Restart the dev server.
+5. Run the SQL in `docs/supabase-policies.sql` inside Supabase SQL Editor.
+6. Restart the dev server.
 
 Until Supabase keys are added, the app runs in local-first demo mode.
 

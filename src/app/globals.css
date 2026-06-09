@@ -160,6 +160,15 @@ a {
   color: var(--ink);
 }
 
+.borderedButton {
+  border: 1px solid var(--line);
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.64;
+}
+
 .compact {
   min-height: 38px;
 }
@@ -320,6 +329,7 @@ a {
 }
 
 .dashboardGrid,
+.authGrid,
 .workspaceGrid,
 .twoColumn,
 .insightGrid {
@@ -331,6 +341,61 @@ a {
 .dashboardGrid {
   grid-template-columns: repeat(4, minmax(0, 1fr));
   padding-block: 22px;
+}
+
+.authGrid {
+  grid-template-columns: 1fr;
+  padding-block: 18px;
+}
+
+.authPanel {
+  display: grid;
+  gap: 14px;
+}
+
+.authControls {
+  align-items: end;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: 180px minmax(220px, 1fr) minmax(180px, 0.7fr) max-content;
+}
+
+.authControls input {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  min-height: 42px;
+  padding: 0 12px;
+}
+
+.segmentedControl {
+  background: #eef4ff;
+  border-radius: 8px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  min-height: 42px;
+  padding: 4px;
+}
+
+.segmentedControl button {
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  color: var(--muted);
+  font-weight: 800;
+}
+
+.segmentedControl .activeSegment {
+  background: #fff;
+  color: var(--brand-dark);
+  box-shadow: 0 4px 12px rgba(23, 32, 51, 0.08);
+}
+
+.authMessage {
+  background: #f8fbff;
+  border-radius: 8px;
+  color: var(--muted);
+  margin: 0;
+  padding: 12px;
 }
 
 .metricCard {
@@ -627,6 +692,10 @@ textarea:focus {
 
   .dashboardGrid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .authControls {
+    grid-template-columns: 1fr;
   }
 }
 
