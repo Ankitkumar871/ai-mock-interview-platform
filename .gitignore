@@ -12,5 +12,6 @@ yarn-error.log*
 pnpm-debug.log*
 *.log
 tsconfig.tsbuildinfo
+.tools
 .DS_Store
 Thumbs.db
